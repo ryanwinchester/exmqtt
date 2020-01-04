@@ -1,6 +1,6 @@
 # ExMQTT
 
-An Elixir wrapper around the erlang [`emqtt`](https://github.com/emqx/emqtt) library.
+An Elixir wrapper around the Erlang [`emqtt`](https://github.com/emqx/emqtt) library.
 
 Why this package?
 
@@ -10,8 +10,8 @@ Why this package?
 
 ## Installation
 
-The package can be installed
-by adding `exmqtt` to your list of dependencies in `mix.exs`:
+The package can be installed by adding `exmqtt` to your list of dependencies in
+`mix.exs`:
 
 ```elixir
 def deps do
@@ -34,6 +34,10 @@ def deps do
   ]
 end
 ```
+
+**Note:** This is not available in hex, and there are no plans to do so unless
+`emqtt` starts consistently and reliably publishing to hex (they do publish to
+hex but not consistently and reliably).
 
 ## Usage
 
@@ -104,6 +108,12 @@ ExMQTT.unsubscribe_sync(topic)
 {:subscriptions, [{topic :: binary, qos :: non_neg_integer}]}
 ```
 
+**Note:**
+
+ * The `opts` are *mostly* the same as [`:emqtt.option()`](https://github.com/emqx/emqtt/blob/783c943f7aa1295b99f4a0c20436978eb6b70053/src/emqtt.erl#L105), but they are different, so use the type defs in this library
+ * `opts.ssl_opts` are erlang's [`:ssl.option()`](https://erlang.org/doc/man/ssl.html#type-tls_client_option)
+ * `opts.handler_functions` type is defined [here](https://github.com/ryanwinchester/exmqtt/blob/b404a86bc3612b23bb32008776de09efa1fee69c/lib/exmqtt.ex#L13)
+
 #### Example `opts` for SSL connection:
 
 ```elixir
@@ -127,6 +137,7 @@ ExMQTT.unsubscribe_sync(topic)
   ]
 ]
 ```
+
 
 ### Message Handler module
 
