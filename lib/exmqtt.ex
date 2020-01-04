@@ -34,7 +34,7 @@ defmodule ExMQTT do
           | {:clean_start, boolean}
           | {:username, iodata}
           | {:password, iodata}
-          | {:protocol_version, :v3 | :v4 | :v5}
+          | {:protocol_version, 3 | 4 | 5}
           | {:keepalive, non_neg_integer}
           | {:max_inflight, pos_integer}
           | {:retry_interval, timeout}
@@ -229,7 +229,10 @@ defmodule ExMQTT do
         result
 
       {:ok, _props, reason_codes} = result ->
-        Logger.error("[ExMQTT] Subscription to #{topic} @ QoS #{qos} failed: #{inspect(reason_codes)}")
+        Logger.error(
+          "[ExMQTT] Subscription to #{topic} @ QoS #{qos} failed: #{inspect(reason_codes)}"
+        )
+
         result
     end
   end

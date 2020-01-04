@@ -92,7 +92,7 @@ ExMQTT.unsubscribe_sync(topic)
 {:clean_start, boolean}
 {:username, iodata}
 {:password, iodata}
-{:protocol_version, :v3 | :v4 | :v5}
+{:protocol_version, 3 | 4 | 5}
 {:keepalive, non_neg_integer}
 {:max_inflight, pos_integer}
 {:retry_interval, timeout}

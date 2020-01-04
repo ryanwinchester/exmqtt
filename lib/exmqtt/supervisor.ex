@@ -6,7 +6,7 @@ defmodule ExMQTT.Supervisor do
   end
 
   def init(opts) do
-    {supervision_opts, opts} = Keyword.pop(opts, :supervision, [strategy: :one_for_one])
+    {supervision_opts, opts} = Keyword.pop(opts, :supervision, strategy: :one_for_one)
 
     children = [{ExMQTT, opts}]
 
