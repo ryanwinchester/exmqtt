@@ -110,7 +110,7 @@ ExMQTT.unsubscribe_sync(topic)
 [
   host: "127.0.0.1",
   port: 8883,
-  protocol_version: 4,
+  protocol_version: 5,
   ssl: true,
   client_id: "client-02",
   username: "user-01",
@@ -118,8 +118,7 @@ ExMQTT.unsubscribe_sync(topic)
   ssl_opts: [
     cacertfile: '/etc/mqtt/certs/all-ca.crt',
     keyfile: '/etc/mqtt/certs/client.key',
-    certfile: '/etc/mqtt/certs/client.crt',
-    verify: :verify_none
+    certfile: '/etc/mqtt/certs/client.crt'
   ],
   handler_module: MyApp.MQTTMessageHandler,
   subscriptions: [
