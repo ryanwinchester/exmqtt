@@ -1,0 +1,6 @@
+%{
+  "cowlib": {:git, "https://github.com/ninenines/cowlib", "106ba84bb04537879d8ce59321a04e0682110b91", [tag: "2.6.0"]},
+  "emqtt": {:git, "https://github.com/emqx/emqtt.git", "e6aa7ed2b4ed76a812463ee386f59426815e99e1", [tag: "v1.1.1"]},
+  "getopt": {:hex, :getopt, "1.0.1", "c73a9fa687b217f2ff79f68a3b637711bb1936e712b521d8ce466b29cbf7808a", [:rebar3], [], "hexpm"},
+  "gun": {:git, "https://github.com/ninenines/gun", "e7dd9f227e46979d8073e71c683395a809b78cb4", [tag: "1.3.0"]},
+}
