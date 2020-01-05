@@ -240,7 +240,7 @@ defmodule ExMQTT do
   end
 
   defp sub(state, topics) when is_list(topics) do
-    Enum.each(state.subscriptions, fn {topic, qos} ->
+    Enum.each(topics, fn {topic, qos} ->
       :ok = sub(state, topic, qos)
     end)
   end
