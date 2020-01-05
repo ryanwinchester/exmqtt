@@ -106,6 +106,7 @@ ExMQTT.unsubscribe_sync(topic)
 {:force_ping, boolean}
 {:properties, %{atom => term}}
 {:subscriptions, [{topic :: binary, qos :: non_neg_integer}]}
+{:start_when, {mfa, retry_in :: non_neg_integer}}
 ```
 
 **Note:**
@@ -113,6 +114,8 @@ ExMQTT.unsubscribe_sync(topic)
  * The `opts` are *mostly* the same as [`:emqtt.option()`](https://github.com/emqx/emqtt/blob/783c943f7aa1295b99f4a0c20436978eb6b70053/src/emqtt.erl#L105), but they are different, so use the type defs in this library
  * `opts.ssl_opts` are erlang's [`:ssl.option()`](https://erlang.org/doc/man/ssl.html#type-tls_client_option)
  * `opts.handler_functions` type is defined [here](https://github.com/ryanwinchester/exmqtt/blob/b404a86bc3612b23bb32008776de09efa1fee69c/lib/exmqtt.ex#L13)
+ * `opts.start_when` is for controller the GenServer's `handle_continue/2` callback, so you can add an
+ init condition. This is handy for example if you need to wait for the network to be ready before you try to connect to the MQTT broker. The value is a tuple `{start_when, retry_in}` where `start_when` is a `{module, function, arguments}` (MFA) tuple for a function that resolves to a `boolean` which determines when we actually finish `init`, and `retry_in` is the time to sleep (in ms) before we try again.
 
 #### Example `opts` for SSL connection:
 
@@ -124,12 +127,14 @@ ExMQTT.unsubscribe_sync(topic)
   ssl: true,
   client_id: "client-02",
   username: "user-01",
+  password: "mysecretprivates",
   clean_start: false,
   ssl_opts: [
     cacertfile: '/etc/mqtt/certs/all-ca.crt',
     keyfile: '/etc/mqtt/certs/client.key',
     certfile: '/etc/mqtt/certs/client.crt'
   ],
+  start_when: {{MyProject.Network, :connected?, []}, 2000},
   handler_module: MyApp.MQTTMessageHandler,
   subscriptions: [
     {"foo/#", 1},

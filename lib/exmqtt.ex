@@ -48,6 +48,7 @@ defmodule ExMQTT do
           | {:force_ping, boolean}
           | {:properties, %{atom => term}}
           | {:subscriptions, [{topic :: binary, qos :: non_neg_integer}]}
+          | {:start_when, {mfa, retry_in :: non_neg_integer}}
         ]
 
   @doc """
@@ -101,6 +102,7 @@ defmodule ExMQTT do
   ## Init
 
   def init(opts) do
+    {start_when, opts} = Keyword.pop(opts, :start_when, :now)
     {subscriptions, opts} = Keyword.pop(opts, :subscriptions, [])
 
     # Assuming for now that if you provide handler functions, that you don't
@@ -112,12 +114,7 @@ defmodule ExMQTT do
         Keyword.pop(opts, :handler_module, MQTT.Handler)
       end
 
-    Logger.debug("[ExMQTT] Connecting to #{opts[:host]}:#{opts[:port]}")
-
-    {:ok, conn_pid} = connect(opts)
-
     state = %State{
-      conn_pid: conn_pid,
       username: opts[:username],
       client_id: opts[:client_id],
       protocol_version: opts[:protocol_version],
@@ -125,14 +122,28 @@ defmodule ExMQTT do
       subscriptions: subscriptions
     }
 
-    Logger.debug("[ExMQTT] Connected #{inspect(conn_pid)}")
+    {:ok, state, {:continue, {:start_when, start_when, opts}}}
+  end
 
-    Enum.each(subscriptions, fn {topic, qos} ->
-      Logger.debug("[ExMQTT] Subscribing to #{topic} @ QoS #{qos}")
-      sub(state, topic, qos)
-    end)
+  ## Continue
 
-    {:ok, state}
+  def handle_continue({:start_when, :now, opts}, state) do
+    {:ok, state} = connect(opts, state)
+    :ok = sub(state, state.subscriptions)
+    {:noreply, state}
+  end
+
+  def handle_continue({:start_when, start_when, opts}, state) do
+    {{module, function, args}, retry_in} = start_when
+
+    if apply(module, function, args) do
+      {:ok, state} = connect(opts, state)
+      :ok = sub(state, state.subscriptions)
+      {:noreply, state}
+    else
+      Process.sleep(retry_in)
+      {:noreply, state, {:continue, {:start_when, start_when, opts}}}
+    end
   end
 
   ## Call
@@ -207,11 +218,17 @@ defmodule ExMQTT do
   # Helpers
   # ----------------------------------------------------------------------------
 
-  defp connect(opts) do
+  defp connect(opts, state) do
+    Logger.debug("[ExMQTT] Connecting to #{opts[:host]}:#{opts[:port]}")
+
     opts = process_opts(opts)
     {:ok, conn_pid} = :emqtt.start_link(opts)
     {:ok, _props} = :emqtt.connect(conn_pid)
     {:ok, conn_pid}
+
+    Logger.debug("[ExMQTT] Connected #{inspect(conn_pid)}")
+
+    {:ok, %State{state | conn_pid: conn_pid}}
   end
 
   defp pub(state, message, topic, qos) do
@@ -222,30 +239,36 @@ defmodule ExMQTT do
     end
   end
 
+  defp sub(state, topics) when is_list(topics) do
+    Enum.each(state.subscriptions, fn {topic, qos} ->
+      :ok = sub(state, topic, qos)
+    end)
+  end
+
   defp sub(state, topic, qos) do
     case :emqtt.subscribe(state.conn_pid, {topic, qos}) do
-      {:ok, _props, [reason_code]} = result when reason_code in [0x00, 0x01, 0x02] ->
+      {:ok, _props, [reason_code]} when reason_code in [0x00, 0x01, 0x02] ->
         Logger.debug("[ExMQTT] Subscribed to #{topic} @ QoS #{qos}")
-        result
+        :ok
 
-      {:ok, _props, reason_codes} = result ->
+      {:ok, _props, reason_codes} ->
         Logger.error(
           "[ExMQTT] Subscription to #{topic} @ QoS #{qos} failed: #{inspect(reason_codes)}"
         )
 
-        result
+        :error
     end
   end
 
   defp unsub(state, topic) do
     case :emqtt.unsubscribe(state.conn_pid, topic) do
-      {:ok, _props, [0x00]} = result ->
+      {:ok, _props, [0x00]} ->
         Logger.debug("[ExMQTT] Unsubscribed from #{topic}")
-        result
+        :ok
 
-      {:ok, _props, reason_codes} = result ->
+      {:ok, _props, reason_codes} ->
         Logger.error("[ExMQTT] Unsubscribe from #{topic} failed #{inspect(reason_codes)}")
-        result
+        :error
     end
   end
 
