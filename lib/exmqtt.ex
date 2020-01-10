@@ -137,12 +137,27 @@ defmodule ExMQTT do
     {{module, function, args}, retry_in} = start_when
 
     if apply(module, function, args) do
-      {:ok, state} = connect(opts, state)
-      :ok = sub(state, state.subscriptions)
-      {:noreply, state}
+      {:noreply, state, {:continue, {:connect, opts}}}
     else
+      Logger.debug("[ExMQTT] Not ready to connect, retrying in #{retry_in} ms")
       Process.sleep(retry_in)
       {:noreply, state, {:continue, {:start_when, start_when, opts}}}
+    end
+  end
+
+  def handle_continue({:connect, opts}, state) do
+    Logger.debug("[ExMQTT] Connecting to #{opts[:host]}:#{opts[:port]}")
+
+    case connect(opts, state) do
+      %State{conn_pid: pid} = state when is_pid(pid) ->
+        Logger.debug("[ExMQTT] Connected #{inspect(pid)}")
+        :ok = sub(state, state.subscriptions)
+        {:noreply, state}
+
+      _ ->
+        Logger.debug("[ExMQTT] Unable to connect, retrying in #{retry_in} ms")
+        Process.sleep(2000)
+        {:noreply, state, {:continue, {:connect, opts}}}
     end
   end
 
@@ -219,14 +234,10 @@ defmodule ExMQTT do
   # ----------------------------------------------------------------------------
 
   defp connect(opts, state) do
-    Logger.debug("[ExMQTT] Connecting to #{opts[:host]}:#{opts[:port]}")
-
     opts = process_opts(opts)
     {:ok, conn_pid} = :emqtt.start_link(opts)
     {:ok, _props} = :emqtt.connect(conn_pid)
     {:ok, conn_pid}
-
-    Logger.debug("[ExMQTT] Connected #{inspect(conn_pid)}")
 
     {:ok, %State{state | conn_pid: conn_pid}}
   end
