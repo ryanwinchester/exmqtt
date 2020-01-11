@@ -2,12 +2,17 @@ defmodule ExMQTT do
   @moduledoc """
   Documentation for MQTT client.
   """
+  @behaviour ExMQTT.DisconnectHandler
+  @behaviour ExMQTT.MessageHandler
+  @behaviour ExMQTT.PubAckHandler
+  @behaviour ExMQTT.PublishHandler
+
   use GenServer
 
   require Logger
 
   defmodule State do
-    defstruct [:conn_pid, :username, :client_id, :handler, :protocol_version, :subscriptions]
+    defstruct [:conn_pid, :username, :client_id, :message_handler, :protocol_version, :subscriptions]
   end
 
   @type opts :: [
@@ -134,33 +139,39 @@ defmodule ExMQTT do
 
   ## Init
 
+  @impl GenServer
   def init(opts) do
     opts = take_opts(opts)
+    {{dc_handler, dc_arg}, opts} = Keyword.pop(opts, :disconnect_handler, {__MODULE__, []})
+    {{msg_handler, msg_arg}, opts} = Keyword.pop(opts, :message_handler, {__MODULE__, []})
+    {{puback_handler, puback_arg}, opts} = Keyword.pop(opts, :puback_handler, {__MODULE__, []})
+    {{publish_handler, pub_arg}, opts} = Keyword.pop(opts, :publish_handler, {__MODULE__, []})
     {start_when, opts} = Keyword.pop(opts, :start_when, :now)
     {subscriptions, opts} = Keyword.pop(opts, :subscriptions, [])
-    {message_handler, opts} = Keyword.pop(opts, :message_handler, ExMQTT.MessageHandler)
-    {puback_handler, opts} = Keyword.pop(opts, :puback_handler, ExMQTT.PubAckHandler)
-    {publish_handler, opts} = Keyword.pop(opts, :publish_handler, ExMQTT.PublishHandler)
-    {disconnect_handler, opts} = Keyword.pop(opts, :disconnect_handler, ExMQTT.DisconnectHandler)
+
+    # EMQTT `msg_handler` functions
+    handler_functions = %{
+      puback: &apply(puback_handler, :handle_puback, [&1, puback_arg]),
+      publish: &apply(publish_handler, :handle_publish, [&1, pub_arg]),
+      disconnected: &apply(dc_handler, :handle_disconnect, [&1, dc_arg])
+    }
+
+    opts = [{:msg_handler, handler_functions} | opts]
 
     state = %State{
       username: opts[:username],
       client_id: opts[:client_id],
       protocol_version: opts[:protocol_version],
-      handler: handler,
+      message_handler: &apply(msg_handler, :handle_message, [&1, &2, msg_arg]),
       subscriptions: subscriptions
-    }
-
-    handler_functions = %{
-      puback: &apply(puback_handler, :handle_puback, [&1, opts, state]),
-      publish: &apply(publish_handler, :handle_publish, [&1, opts, state]),
-      disconnected: &apply(disconnect_handler, :handle_disconnect, [&1, opts, state])
     }
 
     {:ok, state, {:continue, {:start_when, start_when, opts}}}
   end
 
   ## Continue
+
+  @impl GenServer
 
   def handle_continue({:start_when, :now, opts}, state) do
     {:ok, state} = connect(opts, state)
@@ -176,7 +187,7 @@ defmodule ExMQTT do
         :ok = sub(state, state.subscriptions)
         {:noreply, state}
       else
-       {:noreply, state, {:continue, {:connect, opts}}}
+        _ -> {:noreply, state, {:continue, {:connect, opts}}}
       end
     else
       Process.sleep(retry_in)
@@ -185,6 +196,8 @@ defmodule ExMQTT do
   end
 
   ## Call
+
+  @impl GenServer
 
   def handle_call({:publish, message, topic, qos}, _from, state) do
     pub(state, message, topic, qos)
@@ -208,6 +221,8 @@ defmodule ExMQTT do
 
   ## Cast
 
+  @impl GenServer
+
   def handle_cast({:publish, message, topic, qos}, state) do
     pub(state, message, topic, qos)
     {:noreply, state}
@@ -230,13 +245,15 @@ defmodule ExMQTT do
 
   ## Info
 
+  @impl GenServer
+
   def handle_info({:publish, packet}, state) do
     %{payload: payload, topic: topic} = packet
 
     Logger.debug("[ExMQTT] Message received for #{topic}")
 
-    if state.handler do
-      :ok = apply(state.handler, :handle_message, [String.split(topic, "/"), payload])
+    if msg_handler = state.handlers[:message] do
+      :ok = msg_handler.(String.split(topic, "/"), payload)
     end
 
     {:noreply, state}
@@ -254,8 +271,34 @@ defmodule ExMQTT do
 
   ## Disconnect
 
-  def handle_disconnect({_reason_code, _properties}) do
-    # Try reconnecting if unexpected?
+  @impl ExMQTT.DisconnectHandler
+  def handle_disconnect({reason_code, properties}, _arg) do
+    Logger.warn("[ExMQTT] Disconnect received: reason #{reason_code}, properties: #{inspect(properties)}")
+    :ok
+  end
+
+  ## Message
+
+  @impl ExMQTT.MessageHandler
+  def handle_message(_topic, _message, _arg) do
+    Logger.warn("[ExMQTT] Message received but no handler module defined")
+    :ok
+  end
+
+  ## PubAck
+
+  @impl ExMQTT.PubAckHandler
+  def handle_puback(ack, _arg) do
+    Logger.debug("[ExMQTT] PUBACK received #{inspect(ack)}")
+    :ok
+  end
+
+  ## Publish
+
+  @impl ExMQTT.PublishHandler
+  def handle_publish(message, _arg) do
+    Logger.debug("[ExMQTT] Publish: #{inspect(message)}")
+    :ok
   end
 
   # ----------------------------------------------------------------------------

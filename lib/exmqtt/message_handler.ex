@@ -1,14 +1,6 @@
-defmodule ExMQTT.Handler do
+defmodule ExMQTT.MessageHandler do
   @moduledoc """
-  Handler behaviour for the MQTT client.
+  Message Handler behaviour for the MQTT client.
   """
-
-  @callback handle_message(String.t(), String.t()) :: :ok
-
-  require Logger
-
-  def handle_message(_topic, _message) do
-    Logger.warn("[ExMQTT] Message received but no handler module defined")
-    :ok
-  end
+  @callback handle_message(topic :: String.t(), message :: String.t(), term) :: :ok
 end
