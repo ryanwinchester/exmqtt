@@ -10,46 +10,79 @@ defmodule ExMQTT do
     defstruct [:conn_pid, :username, :client_id, :handler, :protocol_version, :subscriptions]
   end
 
-  @type handler_functions :: %{
-          :puback => function(),
-          :publish => (:emqx_types.message() -> any()),
-          :disconnected => ({reason_code :: 0..0xFF, properties :: term()} -> any())
-        }
-
   @type opts :: [
-          {:name, atom}
-          | {:owner, pid}
-          | {:handler_module, module}
-          | {:handler_functions, handler_functions}
-          | {:host, binary}
-          | {:hosts, [{binary, :inet.port_number()}]}
-          | {:port, :inet.port_number()}
-          | {:tcp_opts, [:gen_tcp.option()]}
-          | {:ssl, boolean}
-          | {:ssl_opts, [:ssl.ssl_option()]}
-          | {:ws_path, binary}
-          | {:connect_timeout, pos_integer}
-          | {:bridge_mode, boolean}
-          | {:client_id, iodata}
-          | {:clean_start, boolean}
-          | {:username, iodata}
-          | {:password, iodata}
-          | {:protocol_version, 3 | 4 | 5}
-          | {:keepalive, non_neg_integer}
-          | {:max_inflight, pos_integer}
-          | {:retry_interval, timeout}
-          | {:will_topic, iodata}
-          | {:will_payload, iodata}
-          | {:will_retain, boolean}
-          | {:will_qos, pos_integer}
-          | {:will_props, %{atom => term}}
-          | {:auto_ack, boolean}
-          | {:ack_timeout, pos_integer}
-          | {:force_ping, boolean}
-          | {:properties, %{atom => term}}
-          | {:subscriptions, [{topic :: binary, qos :: non_neg_integer}]}
-          | {:start_when, {mfa, retry_in :: non_neg_integer}}
-        ]
+    {:name, atom}
+    | {:owner, pid}
+    | {:message_handler, module}
+    | {:puback_handler, module}
+    | {:publish_handler, module}
+    | {:disconnect_handler, module}
+    | {:host, binary}
+    | {:hosts, [{binary, :inet.port_number()}]}
+    | {:port, :inet.port_number()}
+    | {:tcp_opts, [:gen_tcp.option()]}
+    | {:ssl, boolean}
+    | {:ssl_opts, [:ssl.ssl_option()]}
+    | {:ws_path, binary}
+    | {:connect_timeout, pos_integer}
+    | {:bridge_mode, boolean}
+    | {:client_id, iodata}
+    | {:clean_start, boolean}
+    | {:username, iodata}
+    | {:password, iodata}
+    | {:protocol_version, 3 | 4 | 5}
+    | {:keepalive, non_neg_integer}
+    | {:max_inflight, pos_integer}
+    | {:retry_interval, timeout}
+    | {:will_topic, iodata}
+    | {:will_payload, iodata}
+    | {:will_retain, boolean}
+    | {:will_qos, pos_integer}
+    | {:will_props, %{atom => term}}
+    | {:auto_ack, boolean}
+    | {:ack_timeout, pos_integer}
+    | {:force_ping, boolean}
+    | {:properties, %{atom => term}}
+    | {:subscriptions, [{topic :: binary, qos :: non_neg_integer}]}
+    | {:start_when, {mfa, retry_in :: non_neg_integer}}
+  ]
+
+  @opt_keys [
+    :name,
+    :owner,
+    :message_handler,
+    :puback_handler,
+    :publish_handler,
+    :disconnect_handler,
+    :host,
+    :hosts,
+    :port,
+    :tcp_opts,
+    :ssl,
+    :ssl_opts,
+    :ws_path,
+    :connect_timeout,
+    :bridge_mode,
+    :client_id,
+    :clean_start,
+    :username,
+    :password,
+    :protocol_version,
+    :keepalive,
+    :max_inflight,
+    :retry_interval,
+    :will_topic,
+    :will_payload,
+    :will_retain,
+    :will_qos,
+    :will_props,
+    :auto_ack,
+    :ack_timeout,
+    :force_ping,
+    :properties,
+    :subscriptions,
+    :start_when
+  ]
 
   @doc """
   Start the MQTT Client GenServer.
@@ -102,17 +135,13 @@ defmodule ExMQTT do
   ## Init
 
   def init(opts) do
+    opts = take_opts(opts)
     {start_when, opts} = Keyword.pop(opts, :start_when, :now)
     {subscriptions, opts} = Keyword.pop(opts, :subscriptions, [])
-
-    # Assuming for now that if you provide handler functions, that you don't
-    # also provide a handler module.
-    {handler, opts} =
-      if Keyword.has_key?(opts, :handler_functions) do
-        {nil, opts}
-      else
-        Keyword.pop(opts, :handler_module, MQTT.Handler)
-      end
+    {message_handler, opts} = Keyword.pop(opts, :message_handler, ExMQTT.MessageHandler)
+    {puback_handler, opts} = Keyword.pop(opts, :puback_handler, ExMQTT.PubAckHandler)
+    {publish_handler, opts} = Keyword.pop(opts, :publish_handler, ExMQTT.PublishHandler)
+    {disconnect_handler, opts} = Keyword.pop(opts, :disconnect_handler, ExMQTT.DisconnectHandler)
 
     state = %State{
       username: opts[:username],
@@ -120,6 +149,12 @@ defmodule ExMQTT do
       protocol_version: opts[:protocol_version],
       handler: handler,
       subscriptions: subscriptions
+    }
+
+    handler_functions = %{
+      puback: &apply(puback_handler, :handle_puback, [&1, opts, state]),
+      publish: &apply(publish_handler, :handle_publish, [&1, opts, state]),
+      disconnected: &apply(disconnect_handler, :handle_disconnect, [&1, opts, state])
     }
 
     {:ok, state, {:continue, {:start_when, start_when, opts}}}
@@ -137,9 +172,12 @@ defmodule ExMQTT do
     {{module, function, args}, retry_in} = start_when
 
     if apply(module, function, args) do
-      {:ok, state} = connect(opts, state)
-      :ok = sub(state, state.subscriptions)
-      {:noreply, state}
+      with {:ok, state} <- connect(opts, state) do
+        :ok = sub(state, state.subscriptions)
+        {:noreply, state}
+      else
+       {:noreply, state, {:continue, {:connect, opts}}}
+      end
     else
       Process.sleep(retry_in)
       {:noreply, state, {:continue, {:start_when, start_when, opts}}}
@@ -214,6 +252,12 @@ defmodule ExMQTT do
     {:noreply, state}
   end
 
+  ## Disconnect
+
+  def handle_disconnect({_reason_code, _properties}) do
+    # Try reconnecting if unexpected?
+  end
+
   # ----------------------------------------------------------------------------
   # Helpers
   # ----------------------------------------------------------------------------
@@ -221,7 +265,7 @@ defmodule ExMQTT do
   defp connect(opts, state) do
     Logger.debug("[ExMQTT] Connecting to #{opts[:host]}:#{opts[:port]}")
 
-    opts = process_opts(opts)
+    opts = map_opts(opts)
     {:ok, conn_pid} = :emqtt.start_link(opts)
     {:ok, _props} = :emqtt.connect(conn_pid)
     {:ok, conn_pid}
@@ -278,15 +322,11 @@ defmodule ExMQTT do
 
   ## Utility
 
-  defp process_opts(opts) do
-    opts
-    |> validate_opts()
-    |> map_opts()
-  end
-
-  defp validate_opts(opts) do
-    # TODO!
-    opts
+  defp take_opts(opts) do
+    case Keyword.split(opts, @opt_keys) do
+      {keep, []} -> keep
+      {_keep, extra} -> raise ArgumentError, "Unrecognized options #{Enum.join(extra, ", ")}"
+    end
   end
 
   # emqtt has some odd opt names and some erlang types that we'll want to
