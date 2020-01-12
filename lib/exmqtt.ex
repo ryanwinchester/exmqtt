@@ -205,6 +205,7 @@ defmodule ExMQTT do
         %{reconnect: {initial_delay, max_delay}} = state
         delay = retry_delay(initial_delay, max_delay, attempt)
         Logger.debug("[ExMQTT] Unable to connect, retrying in #{delay} ms")
+        Process.sleep(delay)
         {:noreply, state, {:continue, {:connect, attempt + 1}}}
     end
   end
