@@ -346,7 +346,7 @@ defmodule ExMQTT do
 
     with(
       {:ok, conn_pid} when is_pid(conn_pid) <- :emqtt.start_link(opts),
-      {:ok, _props} = :emqtt.connect(conn_pid)
+      {:ok, _props} <- :emqtt.connect(conn_pid)
     ) do
       Logger.debug("[ExMQTT] Connected #{inspect(conn_pid)}")
       {:ok, %State{state | conn_pid: conn_pid}}
