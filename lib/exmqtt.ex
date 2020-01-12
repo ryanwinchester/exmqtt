@@ -178,9 +178,7 @@ defmodule ExMQTT do
   @impl GenServer
 
   def handle_continue({:start_when, :now}, state) do
-    {:ok, state} = connect(state)
-    :ok = sub(state, state.subscriptions)
-    {:noreply, state}
+    {:noreply, state, {:continue, {:connect, 0}}}
   end
 
   def handle_continue({:start_when, start_when}, state) do
