@@ -12,7 +12,7 @@ defmodule ExMQTT do
   require Logger
 
   defmodule State do
-    defstruct [:conn_pid, :username, :client_id, :message_handler, :protocol_version, :subscriptions]
+    defstruct [:conn_pid, :username, :client_id, :message_handler, :opts, :protocol_version, :reconnect, :subscriptions]
   end
 
   @type opts :: [
@@ -48,6 +48,7 @@ defmodule ExMQTT do
     | {:ack_timeout, pos_integer}
     | {:force_ping, boolean}
     | {:properties, %{atom => term}}
+    | {:reconnect, {delay :: non_neg_integer, max_delay :: non_neg_integer}}
     | {:subscriptions, [{topic :: binary, qos :: non_neg_integer}]}
     | {:start_when, {mfa, retry_in :: non_neg_integer}}
   ]
@@ -84,7 +85,9 @@ defmodule ExMQTT do
     :auto_ack,
     :ack_timeout,
     :force_ping,
+    :opts,
     :properties,
+    :reconnect,
     :subscriptions,
     :start_when
   ]
@@ -146,6 +149,7 @@ defmodule ExMQTT do
     {{msg_handler, msg_arg}, opts} = Keyword.pop(opts, :message_handler, {__MODULE__, []})
     {{puback_handler, puback_arg}, opts} = Keyword.pop(opts, :puback_handler, {__MODULE__, []})
     {{publish_handler, pub_arg}, opts} = Keyword.pop(opts, :publish_handler, {__MODULE__, []})
+    {{delay, max_delay}, opts} = Keyword.pop(opts, :reconnect, {2000, 60_000})
     {start_when, opts} = Keyword.pop(opts, :start_when, :now)
     {subscriptions, opts} = Keyword.pop(opts, :subscriptions, [])
 
@@ -156,42 +160,54 @@ defmodule ExMQTT do
       disconnected: &apply(dc_handler, :handle_disconnect, [&1, dc_arg])
     }
 
-    opts = [{:msg_handler, handler_functions} | opts]
-
     state = %State{
-      username: opts[:username],
       client_id: opts[:client_id],
-      protocol_version: opts[:protocol_version],
       message_handler: &apply(msg_handler, :handle_message, [&1, &2, msg_arg]),
-      subscriptions: subscriptions
+      protocol_version: opts[:protocol_version],
+      reconnect: {delay, max_delay},
+      subscriptions: subscriptions,
+      username: opts[:username],
+      opts: [{:msg_handler, handler_functions} | opts]
     }
 
-    {:ok, state, {:continue, {:start_when, start_when, opts}}}
+    {:ok, state, {:continue, {:start_when, start_when}}}
   end
 
   ## Continue
 
   @impl GenServer
 
-  def handle_continue({:start_when, :now, opts}, state) do
-    {:ok, state} = connect(opts, state)
+  def handle_continue({:start_when, :now}, state) do
+    {:ok, state} = connect(state)
     :ok = sub(state, state.subscriptions)
     {:noreply, state}
   end
 
-  def handle_continue({:start_when, start_when, opts}, state) do
+  def handle_continue({:start_when, start_when}, state) do
     {{module, function, args}, retry_in} = start_when
 
     if apply(module, function, args) do
-      with {:ok, state} <- connect(opts, state) do
-        :ok = sub(state, state.subscriptions)
-        {:noreply, state}
-      else
-        _ -> {:noreply, state, {:continue, {:connect, opts}}}
-      end
+      {:noreply, state, {:continue, {:connect, 0}}}
     else
       Process.sleep(retry_in)
-      {:noreply, state, {:continue, {:start_when, start_when, opts}}}
+      {:noreply, state, {:continue, {:start_when, start_when}}}
+    end
+  end
+
+  def handle_continue({:connect, attempt}, state) do
+    Logger.debug("[ExMQTT] Connecting to #{state.opts[:host]}:#{state.opts[:port]}")
+
+    case connect(state) do
+      %State{conn_pid: pid} = state when is_pid(pid) ->
+        Logger.debug("[ExMQTT] Connected #{inspect(pid)}")
+        :ok = sub(state, state.subscriptions)
+        {:noreply, state}
+
+      _ ->
+        %{reconnect: {initial_delay, max_delay}} = state
+        delay = retry_delay(initial_delay, max_delay, attempt)
+        Logger.debug("[ExMQTT] Unable to connect, retrying in #{delay} ms")
+        {:noreply, state, {:continue, {:connect, attempt + 1}}}
     end
   end
 
@@ -264,6 +280,21 @@ defmodule ExMQTT do
     {:noreply, state}
   end
 
+  def handle_info({:reconnect, attempt}, %{reconnect: {initial_delay, max_delay}} = state) do
+    Logger.debug("[ExMQTT] Trying to reconnect")
+
+    case connect(state) do
+      %{conn_pid: conn_pid} = state when is_pid(conn_pid) ->
+        Logger.debug("[ExMQTT] Connected #{inspect(conn_pid)}")
+        {:noreply, state}
+
+      state ->
+        delay = retry_delay(initial_delay, max_delay, attempt)
+        Process.send_after(self(), {:reconnect, attempt + 1}, delay)
+        {:noreply, state}
+    end
+  end
+
   def handle_info(msg, state) do
     Logger.warn("[ExMQTT] Unhandled message #{inspect(msg)}")
     {:noreply, state}
@@ -274,6 +305,9 @@ defmodule ExMQTT do
   @impl ExMQTT.DisconnectHandler
   def handle_disconnect({reason_code, properties}, _arg) do
     Logger.warn("[ExMQTT] Disconnect received: reason #{reason_code}, properties: #{inspect(properties)}")
+
+    # Process.send_after(self(), {:reconnect, 0}, 500)
+
     :ok
   end
 
@@ -305,10 +339,10 @@ defmodule ExMQTT do
   # Helpers
   # ----------------------------------------------------------------------------
 
-  defp connect(opts, state) do
-    Logger.debug("[ExMQTT] Connecting to #{opts[:host]}:#{opts[:port]}")
+  defp connect(%State{} = state) do
+    Logger.debug("[ExMQTT] Connecting to #{state.opts[:host]}:#{state.opts[:port]}")
 
-    opts = map_opts(opts)
+    opts = map_opts(state.opts)
     {:ok, conn_pid} = :emqtt.start_link(opts)
     {:ok, _props} = :emqtt.connect(conn_pid)
     {:ok, conn_pid}
@@ -318,7 +352,7 @@ defmodule ExMQTT do
     {:ok, %State{state | conn_pid: conn_pid}}
   end
 
-  defp pub(state, message, topic, qos) do
+  defp pub(%State{} = state, message, topic, qos) do
     if qos == 0 do
       :ok = :emqtt.publish(state.conn_pid, topic, message, qos)
     else
@@ -326,13 +360,13 @@ defmodule ExMQTT do
     end
   end
 
-  defp sub(state, topics) when is_list(topics) do
+  defp sub(%State{} = state, topics) when is_list(topics) do
     Enum.each(topics, fn {topic, qos} ->
       :ok = sub(state, topic, qos)
     end)
   end
 
-  defp sub(state, topic, qos) do
+  defp sub(%State{} = state, topic, qos) do
     case :emqtt.subscribe(state.conn_pid, {topic, qos}) do
       {:ok, _props, [reason_code]} when reason_code in [0x00, 0x01, 0x02] ->
         Logger.debug("[ExMQTT] Subscribed to #{topic} @ QoS #{qos}")
@@ -347,7 +381,7 @@ defmodule ExMQTT do
     end
   end
 
-  defp unsub(state, topic) do
+  defp unsub(%State{} = state, topic) do
     case :emqtt.unsubscribe(state.conn_pid, topic) do
       {:ok, _props, [0x00]} ->
         Logger.debug("[ExMQTT] Unsubscribed from #{topic}")
@@ -359,7 +393,7 @@ defmodule ExMQTT do
     end
   end
 
-  defp dc(state) do
+  defp dc(%State{} = state) do
     :ok = :emqtt.disconnect(state.conn_pid)
   end
 
@@ -371,6 +405,26 @@ defmodule ExMQTT do
       {_keep, extra} -> raise ArgumentError, "Unrecognized options #{Enum.join(extra, ", ")}"
     end
   end
+
+  # Backoff with full jitter (after 3 attempts).
+  defp retry_delay(initial_delay, _max_delay, attempt) when attempt < 3 do
+    initial_delay
+  end
+
+  defp retry_delay(initial_delay, max_delay, attempt) when attempt < 1000 do
+    temp = min(max_delay, pow(initial_delay * 2, attempt))
+    temp / 2 + Enum.random([0, temp / 2])
+  end
+
+  defp retry_delay(_initial_delay, max_delay, _attempt) do
+    max_delay
+  end
+
+  # Integer powers:
+  # https://stackoverflow.com/a/44065965/2066155
+  defp pow(n, k), do: pow(n, k, 1)
+  defp pow(_, 0, acc), do: acc
+  defp pow(n, k, acc), do: pow(n, k - 1, n * acc)
 
   # emqtt has some odd opt names and some erlang types that we'll want to
   # redefine but then map to emqtt expected format.
