@@ -198,12 +198,12 @@ defmodule ExMQTT do
     Logger.debug("[ExMQTT] Connecting to #{state.opts[:host]}:#{state.opts[:port]}")
 
     case connect(state) do
-      %State{conn_pid: pid} = state when is_pid(pid) ->
-        Logger.debug("[ExMQTT] Connected #{inspect(pid)}")
+      {:ok, state} ->
+        Logger.debug("[ExMQTT] Connected #{inspect(state.conn_pid)}")
         :ok = sub(state, state.subscriptions)
         {:noreply, state}
 
-      _ ->
+      {:error, _reason} ->
         %{reconnect: {initial_delay, max_delay}} = state
         delay = retry_delay(initial_delay, max_delay, attempt)
         Logger.debug("[ExMQTT] Unable to connect, retrying in #{delay} ms")
@@ -284,11 +284,11 @@ defmodule ExMQTT do
     Logger.debug("[ExMQTT] Trying to reconnect")
 
     case connect(state) do
-      %{conn_pid: conn_pid} = state when is_pid(conn_pid) ->
-        Logger.debug("[ExMQTT] Connected #{inspect(conn_pid)}")
+      {:ok, state} ->
+        Logger.debug("[ExMQTT] Connected #{inspect(state.conn_pid)}")
         {:noreply, state}
 
-      state ->
+      {:error, _reason} ->
         delay = retry_delay(initial_delay, max_delay, attempt)
         Process.send_after(self(), {:reconnect, attempt + 1}, delay)
         {:noreply, state}
@@ -343,13 +343,20 @@ defmodule ExMQTT do
     Logger.debug("[ExMQTT] Connecting to #{state.opts[:host]}:#{state.opts[:port]}")
 
     opts = map_opts(state.opts)
-    {:ok, conn_pid} = :emqtt.start_link(opts)
-    {:ok, _props} = :emqtt.connect(conn_pid)
-    {:ok, conn_pid}
 
-    Logger.debug("[ExMQTT] Connected #{inspect(conn_pid)}")
+    with(
+      {:ok, conn_pid} when is_pid(conn_pid) <- :emqtt.start_link(opts),
+      {:ok, _props} = :emqtt.connect(conn_pid)
+    ) do
+      Logger.debug("[ExMQTT] Connected #{inspect(conn_pid)}")
+      {:ok, %State{state | conn_pid: conn_pid}}
+    else
+      {:error, reason} when is_atom(reason) ->
+        {:error, reason}
 
-    {:ok, %State{state | conn_pid: conn_pid}}
+      {:ok, res} ->
+        {:error, res}
+    end
   end
 
   defp pub(%State{} = state, message, topic, qos) do
