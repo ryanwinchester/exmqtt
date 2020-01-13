@@ -193,11 +193,8 @@ defmodule ExMQTT do
   end
 
   def handle_continue({:connect, attempt}, state) do
-    Logger.debug("[ExMQTT] Connecting to #{state.opts[:host]}:#{state.opts[:port]}")
-
     case connect(state) do
       {:ok, state} ->
-        Logger.debug("[ExMQTT] Connected #{inspect(state.conn_pid)}")
         :ok = sub(state, state.subscriptions)
         {:noreply, state}
 
@@ -205,7 +202,7 @@ defmodule ExMQTT do
         %{reconnect: {initial_delay, max_delay}} = state
         delay = retry_delay(initial_delay, max_delay, attempt)
         Logger.debug("[ExMQTT] Unable to connect, retrying in #{delay} ms")
-        Process.sleep(delay)
+        :timer.sleep(delay)
         {:noreply, state, {:continue, {:connect, attempt + 1}}}
     end
   end
