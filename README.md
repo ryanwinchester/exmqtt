@@ -148,7 +148,7 @@ ExMQTT.unsubscribe_sync(topic)
 
 ```elixir
 defmodule MyApp.MQTTMessageHandler do
-  @behaviour ExMQTT.Handler
+  @behaviour ExMQTT.MessageHandler
 
   @impl true
   def handle_message(["foo", "bar"], message) do
