@@ -77,8 +77,10 @@ ExMQTT.unsubscribe_sync(topic)
 ```elixir
 {:name, atom}
 {:owner, pid}
-{:handler_module, module}
-{:handler_functions, handler_functions}
+{:message_handler, module}
+{:puback_handler, module}
+{:publish_handler, module}
+{:disconnect_handler, module}
 {:host, binary}
 {:hosts, [{binary, :inet.port_number()}]}
 {:port, :inet.port_number()}
@@ -135,7 +137,7 @@ ExMQTT.unsubscribe_sync(topic)
     certfile: '/etc/mqtt/certs/client.crt'
   ],
   start_when: {{MyProject.Network, :connected?, []}, 2000},
-  handler_module: MyApp.MQTTMessageHandler,
+  message_handler: {MyApp.MQTTMessageHandler, []},
   subscriptions: [
     {"foo/#", 1},
     {"baz/+", 0}
