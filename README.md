@@ -77,8 +77,10 @@ ExMQTT.unsubscribe_sync(topic)
 ```elixir
 {:name, atom}
 {:owner, pid}
-{:handler_module, module}
-{:handler_functions, handler_functions}
+{:message_handler, module}
+{:puback_handler, module}
+{:publish_handler, module}
+{:disconnect_handler, module}
 {:host, binary}
 {:hosts, [{binary, :inet.port_number()}]}
 {:port, :inet.port_number()}
@@ -135,7 +137,7 @@ ExMQTT.unsubscribe_sync(topic)
     certfile: '/etc/mqtt/certs/client.crt'
   ],
   start_when: {{MyProject.Network, :connected?, []}, 2000},
-  handler_module: MyApp.MQTTMessageHandler,
+  message_handler: {MyApp.MQTTMessageHandler, []},
   subscriptions: [
     {"foo/#", 1},
     {"baz/+", 0}
@@ -148,22 +150,22 @@ ExMQTT.unsubscribe_sync(topic)
 
 ```elixir
 defmodule MyApp.MQTTMessageHandler do
-  @behaviour ExMQTT.Handler
+  @behaviour ExMQTT.MessageHandler
 
   @impl true
-  def handle_message(["foo", "bar"], message) do
+  def handle_message(["foo", "bar"], message, _extra) do
     # Matches on "foo/bar"
   end
 
-  def handle_message(["foo", "bar" | _rest], message) do
+  def handle_message(["foo", "bar" | _rest], message, _extra) do
     # Matches on "foo/bar/#"
   end
 
-  def handle_message(["baz", buzz], message) do
+  def handle_message(["baz", buzz], message, _extra) do
     # Matches on "baz/+"
   end
 
-  def handle_message(topic, message) do
+  def handle_message(topic, message, _extra) do
     # Catch-all
   end
 end
