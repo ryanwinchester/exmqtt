@@ -39,6 +39,15 @@ end
 `emqtt` starts consistently and reliably publishing to hex (they do publish to
 hex but not consistently and reliably).
 
+## Development
+
+By default [`emqtt`](https://github.com/emqx/emqtt) compiles `Quic` library, if it is not necessary is 
+possible set the env variable `BUILD_WITHOUT_QUIC` to `1`:
+
+```
+BUILD_WITHOUT_QUIC=1 iex -S mix 
+```
+
 ## Usage
 
 ### Starting the client
@@ -94,7 +103,7 @@ ExMQTT.unsubscribe_sync(topic)
 {:clean_start, boolean}
 {:username, iodata}
 {:password, iodata}
-{:protocol_version, 3 | 4 | 5}
+{:protocol_version, :"3.1" | :"3.1.1" | :"5"}
 {:keepalive, non_neg_integer}
 {:max_inflight, pos_integer}
 {:retry_interval, timeout}
@@ -118,6 +127,7 @@ ExMQTT.unsubscribe_sync(topic)
  * `opts.handler_functions` type is defined [here](https://github.com/ryanwinchester/exmqtt/blob/b404a86bc3612b23bb32008776de09efa1fee69c/lib/exmqtt.ex#L13)
  * `opts.start_when` is for controller the GenServer's `handle_continue/2` callback, so you can add an
  init condition. This is handy for example if you need to wait for the network to be ready before you try to connect to the MQTT broker. The value is a tuple `{start_when, retry_in}` where `start_when` is a `{module, function, arguments}` (MFA) tuple for a function that resolves to a `boolean` which determines when we actually finish `init`, and `retry_in` is the time to sleep (in ms) before we try again.
+ *  To work with common CA, it is useful to use [`certifi`](https://github.com/certifi/erlang-certifi)
 
 #### Example `opts` for SSL connection:
 
@@ -125,7 +135,7 @@ ExMQTT.unsubscribe_sync(topic)
 [
   host: "127.0.0.1",
   port: 8883,
-  protocol_version: 5,
+  protocol_version: :"5",
   ssl: true,
   client_id: "client-02",
   username: "user-01",
@@ -145,6 +155,32 @@ ExMQTT.unsubscribe_sync(topic)
 ]
 ```
 
+the same example with `certifi`:
+
+
+```elixir
+[
+  host: "127.0.0.1",
+  port: 8883,
+  protocol_version: :"5",
+  ssl: true,
+  client_id: "client-02",
+  username: "user-01",
+  password: "mysecretprivates",
+  clean_start: false,
+  ssl_opts: [
+    cacerts: :certifi.cacerts(),
+    keyfile: '/etc/mqtt/certs/client.key',
+    certfile: '/etc/mqtt/certs/client.crt'
+  ],
+  start_when: {{MyProject.Network, :connected?, []}, 2000},
+  message_handler: {MyApp.MQTTMessageHandler, []},
+  subscriptions: [
+    {"foo/#", 1},
+    {"baz/+", 0}
+  ]
+]
+```
 
 ### Message Handler module
 
