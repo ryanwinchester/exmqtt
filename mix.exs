@@ -4,7 +4,7 @@ defmodule ExMQTT.MixProject do
   def project do
     [
       app: :exmqtt,
-      version: "0.1.0",
+      version: "0.2.0",
       elixir: "~> 1.9",
       description: "An Elixir wrapper for erlang emqtt lib",
       package: package(),
@@ -23,7 +23,7 @@ defmodule ExMQTT.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:emqtt, github: "emqx/emqtt", tag: "v1.1.1"},
+      {:emqtt, github: "emqx/emqtt", tag: "1.8.6"},
       {:ex_doc, "~> 0.14", only: :dev, runtime: false}
     ]
   end
